@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import pandas as pd
 import streamlit as st
 
@@ -11,6 +13,18 @@ st.set_page_config(page_title="ClearCharge", page_icon="💳", layout="wide")
 st.title("💳 ClearCharge")
 st.caption("AI-powered bank statement explainer · flags uncertain transactions for human review")
 
+with st.expander("Getting Started", expanded=True):
+    st.markdown(
+        "1. Set `ANTHROPIC_API_KEY`\n"
+        "2. Upload CSV with `Date`, `Description`, `Amount`\n"
+        "3. Click **Classify transactions**\n"
+        "4. Review `confidence < 70` or `fraud_flag = True` rows"
+    )
+    st.caption(
+        "Routing note: transactions are analyzed with Claude Haiku first and "
+        "automatically escalated to Claude Sonnet when confidence is low."
+    )
+
 # ── File upload ───────────────────────────────────────────────────────────────
 uploaded = st.file_uploader("Upload your bank CSV (Date, Description, Amount)", type=["csv"])
 if uploaded is None:
@@ -19,11 +33,20 @@ if uploaded is None:
 
 df = pd.read_csv(uploaded)
 required_columns = {"Date", "Description", "Amount"}
-if not required_columns.issubset(df.columns):
-    st.error("❌ CSV must have columns: Date, Description, Amount")
+missing_columns = sorted(required_columns - set(df.columns))
+if missing_columns:
+    st.error("❌ Missing required columns: " + ", ".join(missing_columns))
+    st.caption("Expected headers: Date, Description, Amount")
     st.stop()
 
 st.success(f"✅ Loaded {len(df)} transactions from **{uploaded.name}**")
+
+if not os.getenv("ANTHROPIC_API_KEY"):
+    st.error("Missing `ANTHROPIC_API_KEY`.")
+    st.code("export ANTHROPIC_API_KEY='your_key_here'  # macOS/Linux")
+    st.code("$env:ANTHROPIC_API_KEY='your_key_here'    # PowerShell")
+    st.code("set ANTHROPIC_API_KEY=your_key_here       # Windows cmd")
+    st.stop()
 
 # ── Run classifier ────────────────────────────────────────────────────────────
 if st.button("🔍 Classify transactions", type="primary"):
@@ -32,7 +55,12 @@ if st.button("🔍 Classify transactions", type="primary"):
     total = len(df.index)
 
     for i, row in enumerate(df.to_dict(orient="records"), start=1):
-        result = classify_transaction(row)
+        try:
+            result = classify_transaction(row)
+        except ValueError as exc:
+            st.error(f"Classification failed at row {i}: {exc}")
+            st.caption("Retry after confirming API key and CSV formatting.")
+            st.stop()
         records.append({**row, **result})
         progress.progress(i / total if total else 1.0,
                           text=f"Analysing {i} of {total}…")
