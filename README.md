@@ -1,80 +1,39 @@
 # ClearCharge
 
-AI-powered transaction classifier for beginners. Upload bank transactions and get:
-- spending category
-- plain-English explanation
-- confidence score (0-100)
-- fraud flag
+AI-powered bank statement explainer built for the **Financial Intelligence** track at Cursor × AI Hackathon London 2026.
 
-Low-confidence rows and flagged rows are routed into a human **Review Queue**.
+---
 
-## Quickstart (Under 10 Minutes)
+## What it does
 
-### 1) Install dependencies
-```bash
-python -m pip install -r requirements.txt
-```
+Most bank statements are full of cryptic merchant codes. ClearCharge takes a CSV of transactions and does three things:
 
-### 2) Set your Anthropic API key
+**1. Classifies every transaction**
+Each row gets a plain-English category (Groceries, Transport, Dining, etc.) and a confidence score. The agent uses two Claude models — Haiku for fast, clear-cut transactions and Sonnet for anything that needs deeper reasoning — routing automatically based on confidence.
 
-**macOS/Linux (bash/zsh)**
-```bash
-export ANTHROPIC_API_KEY="your_key_here"
-```
+**2. Explains cryptic merchant names**
+`SQ *BFST CLB 28374` becomes *"Square payment to a breakfast café"*. `AMZN MKTP US*MN6XJ` becomes *"Amazon Marketplace purchase"*. Every transaction gets a one-sentence plain-English explanation.
 
-**Windows PowerShell**
-```powershell
-$env:ANTHROPIC_API_KEY="your_key_here"
-```
+**3. Flags uncertain and suspicious transactions for human review**
+Any transaction with confidence below 70% or a fraud signal goes into a dedicated Review Queue. The agent surfaces what it does not know — it does not hide uncertainty behind a confident-sounding label. A £999 charge to an unknown merchant at 3am shows up as: fraud flag `True`, confidence `22%`, escalated for human review.
 
-**Windows cmd**
-```cmd
-set ANTHROPIC_API_KEY=your_key_here
-```
+---
 
-### 3) Run the app (PATH-safe)
-```bash
-python -m streamlit run app.py
-```
+## Human-in-the-loop design
 
-### 4) Test quickly
-Upload `sample_transactions.csv`.
+The Review Queue is not optional UX — it is the core design principle. ClearCharge is built on the premise that a wrong categorisation becomes a wrong financial decision downstream. The agent is calibrated to be conservative: when it is not sure, it says so and asks a human to look. Confidence thresholds are explicit and adjustable.
 
-## CSV Format
+---
 
-Your CSV must include exactly these headers:
-- `Date`
-- `Description`
-- `Amount`
+## Tech
 
-Example:
-```csv
-Date,Description,Amount
-2026-04-01,Tesco Superstore #1184,-42.37
-2026-04-10,UNKNOWN MERCHANT 03:00AM,-999.00
-```
+- **Claude Haiku** — first-pass classification for clear transactions (fast, low-cost)
+- **Claude Sonnet** — deep reasoning for uncertain or flagged items
+- **Streamlit** — browser UI, no frontend code required
+- **Python** — classifier, prompt logic, model routing
 
-## How Model Routing Works
+---
 
-1. First pass uses `claude-haiku-4-5-20251001`
-2. If confidence is below 70, ClearCharge re-runs with `claude-sonnet-4-6`
-3. Final output includes category, explanation, confidence, fraud flag, and model used
+## Sample data
 
-## Troubleshooting
-
-### `streamlit: command not found`
-Use:
-```bash
-python -m streamlit run app.py
-```
-
-### Missing API key
-If the app says `Missing ANTHROPIC_API_KEY`, set the env var in the same terminal where you run Streamlit.
-
-### CSV errors
-If classification does not start:
-- check headers are exactly `Date`, `Description`, `Amount`
-- ensure `Amount` is numeric-style text (e.g. `-42.37`)
-
-### Model returned non-JSON response
-The classifier already handles markdown-wrapped JSON responses from Claude. If this still appears, retry once and confirm your API key is valid.
+`sample_transactions.csv` includes 22 transactions: recognisable UK merchants, cryptic merchant codes, and one obviously suspicious row (£999, unknown merchant, 3am) to demonstrate fraud detection.
