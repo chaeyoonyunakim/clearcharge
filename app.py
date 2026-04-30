@@ -5,40 +5,116 @@ import streamlit as st
 
 from classifier import classify_transaction
 
-st.set_page_config(page_title="ClearCharge", layout="wide")
-st.title("ClearCharge - Transaction Classifier")
-st.write(
-    "Upload a CSV with columns Date, Description, Amount to classify transactions and review risky items."
-)
+# ── Page config ───────────────────────────────────────────────────────────────
+st.set_page_config(page_title="ClearCharge", page_icon="💳", layout="wide")
 
-uploaded = st.file_uploader("Upload transaction CSV", type=["csv"])
+st.title("💳 ClearCharge")
+st.caption("AI-powered bank statement explainer · flags uncertain transactions for human review")
+
+# ── File upload ───────────────────────────────────────────────────────────────
+uploaded = st.file_uploader("Upload your bank CSV (Date, Description, Amount)", type=["csv"])
 if uploaded is None:
-    st.info("Tip: upload sample_transactions.csv to test quickly.")
+    st.info("👆 Upload a CSV to get started — or use **sample_transactions.csv** to test.")
     st.stop()
 
 df = pd.read_csv(uploaded)
 required_columns = {"Date", "Description", "Amount"}
 if not required_columns.issubset(df.columns):
-    st.error("CSV must contain Date, Description, Amount columns.")
+    st.error("❌ CSV must have columns: Date, Description, Amount")
     st.stop()
 
-if st.button("Classify transactions", type="primary"):
+st.success(f"✅ Loaded {len(df)} transactions from **{uploaded.name}**")
+
+# ── Run classifier ────────────────────────────────────────────────────────────
+if st.button("🔍 Classify transactions", type="primary"):
     records = []
-    progress = st.progress(0)
+    progress = st.progress(0, text="Analysing transactions…")
     total = len(df.index)
 
     for i, row in enumerate(df.to_dict(orient="records"), start=1):
-        records.append({**row, **classify_transaction(row)})
-        progress.progress(i / total if total else 1.0)
+        result = classify_transaction(row)
+        records.append({**row, **result})
+        progress.progress(i / total if total else 1.0,
+                          text=f"Analysing {i} of {total}…")
 
+    progress.empty()
     result_df = pd.DataFrame(records)
-    st.subheader("Results")
-    st.dataframe(result_df, use_container_width=True)
 
-    st.subheader("Review Queue")
-    review_df = result_df[(result_df["fraud_flag"]) | (result_df["confidence"] < 70)]
+    # ── Summary metrics ───────────────────────────────────────────────────────
+    total_count   = len(result_df)
+    flagged_count = int(
+        ((result_df["fraud_flag"]) | (result_df["confidence"] < 70)).sum()
+    )
+    avg_conf = int(result_df["confidence"].mean())
+    fraud_count = int(result_df["fraud_flag"].sum())
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Transactions", total_count)
+    col2.metric("Avg Confidence", f"{avg_conf}%")
+    col3.metric("Need Review", flagged_count,
+                delta=f"{flagged_count} flagged" if flagged_count else None,
+                delta_color="inverse")
+    col4.metric("Fraud Signals", fraud_count,
+                delta=f"{fraud_count} detected" if fraud_count else None,
+                delta_color="inverse")
+
+    st.divider()
+
+    # ── Colour-coded results table ────────────────────────────────────────────
+    def row_colour(row):
+        if row["fraud_flag"]:
+            colour = "background-color: #ffd6d6"   # red
+        elif row["confidence"] < 70:
+            colour = "background-color: #fff3cd"   # amber
+        else:
+            colour = "background-color: #d4edda"   # green
+        return [colour] * len(row)
+
+    display_cols = ["Date", "Description", "Amount",
+                    "category", "confidence", "fraud_flag", "model_used"]
+    styled = (
+        result_df[display_cols]
+        .style.apply(row_colour, axis=1)
+        .format({"confidence": "{}%"})
+    )
+
+    st.subheader("📊 All Transactions")
+    st.caption("🟢 High confidence  🟡 Uncertain (< 70%)  🔴 Fraud signal")
+    st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── Human Review Queue ────────────────────────────────────────────────────
+    st.subheader("🚨 Human Review Queue")
+    review_df = result_df[
+        (result_df["fraud_flag"]) | (result_df["confidence"] < 70)
+    ].reset_index(drop=True)
+
     if review_df.empty:
-        st.success("No transactions require review.")
+        st.success("✅ All transactions cleared — no human review needed.")
     else:
-        st.warning("Flagged transactions require review.")
-        st.dataframe(review_df, use_container_width=True)
+        st.warning(
+            f"**{len(review_df)} transaction{'s' if len(review_df) > 1 else ''} "
+            f"need your review.** The agent is not confident enough to act alone."
+        )
+
+        for _, row in review_df.iterrows():
+            fraud_label = "🔴 FRAUD SIGNAL" if row["fraud_flag"] else "🟡 UNCERTAIN"
+            header = (
+                f"{fraud_label} · {row['Date']} · "
+                f"{row['Description']} · £{abs(float(row['Amount'])):.2f}"
+            )
+            with st.expander(header):
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Category", row["category"])
+                c2.metric("Confidence", f"{row['confidence']}%")
+                c3.metric("Fraud flag", "⚠️ Yes" if row["fraud_flag"] else "No")
+
+                st.markdown(f"**What the agent thinks:** {row['explanation']}")
+
+                model_label = (
+                    "⚡ Claude Haiku (fast)"
+                    if "haiku" in str(row.get("model_used", "")).lower()
+                    else "🧠 Claude Sonnet (deep reasoning)"
+                )
+                st.caption(f"Analysed by {model_label} · Escalated due to low confidence or fraud signal")

@@ -63,6 +63,13 @@ def _run_model(row: dict[str, Any], model: str) -> dict[str, Any]:
         block.text for block in response.content if getattr(block, "type", None) == "text"
     ).strip()
 
+    # Strip markdown code fences if the model wrapped its response
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.strip()
+
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
